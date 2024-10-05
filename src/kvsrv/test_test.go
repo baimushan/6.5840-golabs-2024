@@ -245,17 +245,17 @@ func GenericTest(t *testing.T, nclients int, unreliable bool, randomkeys bool) {
 				}
 				nv := "x " + strconv.Itoa(cli) + " " + strconv.Itoa(j) + " y"
 				if (rand.Int() % 1000) < 500 {
-					//log.Printf("%d: client new append %v\n", cli, nv)
 					l := Append(cfg, myck, key, nv, opLog, cli)
+					//log.Printf("%d: client new append %v %v\n", cli, key, l)
 					if !randomkeys {
 						if j > 0 {
 							o := "x " + strconv.Itoa(cli) + " " + strconv.Itoa(j-1) + " y"
 							if !inHistory(o, l) {
-								t.Fatalf("error: old %v not in return\n%v\n", o, l)
+								t.Fatalf("%d error: old %v not in return\n%v\n", cli, o, l)
 							}
 						}
 						if inHistory(nv, l) {
-							t.Fatalf("error: new value %v in returned values\n%v\n", nv, l)
+							t.Fatalf("%d error: new value %v in returned values\n%v\n", cli, nv, l)
 						}
 						last = NextValue(last, nv)
 					}
@@ -264,10 +264,11 @@ func GenericTest(t *testing.T, nclients int, unreliable bool, randomkeys bool) {
 					// we only do this when using random keys, because it would break the
 					// check done after Get() operations
 					Put(cfg, myck, key, nv, opLog, cli)
+					//log.Printf("%d: client new put %v %v\n", cli, key, nv)
 					j++
 				} else {
-					//log.Printf("%d: client new get %v\n", cli, key)
 					v := Get(cfg, myck, key, opLog, cli)
+					//log.Printf("%d: client get %v value %v last %v\n", cli, key, v, last)
 					// the following check only makes sense when we're not using random keys
 					if !randomkeys && v != last {
 						t.Fatalf("get wrong value, key %v, wanted:\n%v\n, got\n%v\n", key, last, v)
