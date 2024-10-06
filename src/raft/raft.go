@@ -20,6 +20,7 @@ package raft
 import (
 	//	"bytes"
 
+	"log"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -27,6 +28,7 @@ import (
 
 	//	"6.5840/labgob"
 	"6.5840/labrpc"
+	"6.5840/util"
 )
 
 const (
@@ -80,6 +82,8 @@ type Raft struct {
 	votesReceived  int
 	electionTimer  *time.Timer
 	heartbeatTimer *time.Timer
+
+	logger *util.Logger
 }
 
 // return currentTerm and whether this server
@@ -169,17 +173,35 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if rf.currentTerm > args.Term {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
+		rf.logger.Debug("%d receive RequestVote state %d term %d  (rf.currentTerm  %d > args.Term %d ) args %v reply %v",
+			rf.me, rf.state, rf.commitIndex, rf.commitIndex, args.Term, args, reply)
 		return
 	}
 
-	if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
-		rf.votedFor = args.CandidateId
-		reply.VoteGranted = true
-		rf.resetElectionTimer()
+	if rf.currentTerm == args.Term {
+		if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
+			rf.votedFor = args.CandidateId
+			reply.VoteGranted = true
+			rf.resetElectionTimer()
+			rf.logger.Debug("%d receive RequestVote state %d term %d  support vote  args %v reply %v",
+				rf.me, rf.state, rf.commitIndex, args, reply)
+		} else {
+			reply.Term = rf.currentTerm
+			reply.VoteGranted = false
+			rf.logger.Debug("%d receive RequestVote state %d term %d dent vote because has vote %d args %v reply %v",
+				rf.me, rf.state, rf.commitIndex, rf.votedFor, args, reply)
+		}
+		return
 	}
 
 	if rf.currentTerm < args.Term {
 		rf.becomeFollower(args.Term)
+
+		rf.votedFor = args.CandidateId
+		reply.VoteGranted = true
+		rf.logger.Debug("%d receive RequestVote state %d term %d  (rf.currentTerm  %d < args.Term %d ) args %v reply %v",
+			rf.me, rf.state, rf.commitIndex, rf.commitIndex, args.Term, args, reply)
+
 	}
 
 }
@@ -225,7 +247,7 @@ func (rf *Raft) resetElectionTimer() {
 }
 
 func (rf *Raft) electionTimeout() time.Duration {
-	return time.Duration(150+rand.Intn(150)) * time.Millisecond
+	return time.Duration(500+rand.Intn(150)) * time.Millisecond
 }
 
 func (rf *Raft) resetHeartbeatTimer() {
@@ -269,7 +291,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-
+	rf.logger.Debug("%d state %d term %d sendRequestVote args %v reply %v", rf.me, rf.state, rf.commitIndex, args, reply)
 	if ok {
 		if reply.Term > rf.currentTerm {
 			rf.becomeFollower(reply.Term)
@@ -330,6 +352,8 @@ func (rf *Raft) startElection() {
 	rf.currentTerm++
 	rf.votedFor = rf.me
 	rf.state = Candidate
+	rf.logger.Debug("%d start elect term %d ", rf.me, rf.currentTerm)
+
 	// ... start RequestVote RPCs ...
 	for peer := range rf.peers {
 		if peer == rf.me {
@@ -359,6 +383,7 @@ func (rf *Raft) ticker() {
 			rf.mu.Lock()
 			if rf.state == Leader {
 				rf.sendHeartbeats()
+				rf.resetHeartbeatTimer()
 			}
 			rf.mu.Unlock()
 		case <-time.After(SleepInterval):
@@ -391,8 +416,13 @@ func (rf *Raft) sendAppendEntries(peer int) {
 		defer rf.mu.Unlock()
 
 		if reply.Term > rf.currentTerm {
+			rf.logger.Debug("%d sendAppendEntriesRPC peer %d term %d > my term %d ", rf.me, peer, reply.Term, rf.currentTerm)
 			rf.becomeFollower(reply.Term)
+		} else {
+			rf.logger.Debug("%d sendAppendEntriesRPC peer %d term %d <= my term %d ", rf.me, peer, reply.Term, rf.currentTerm)
 		}
+	} else {
+		rf.logger.Debug("%d sendAppendEntriesRPC fail term %d ", rf.me, rf.currentTerm)
 	}
 }
 
@@ -405,12 +435,15 @@ func (rf *Raft) becomeFollower(term int) {
 	if rf.heartbeatTimer != nil {
 		rf.heartbeatTimer.Stop()
 	}
+	rf.logger.Debug("%d become follower term %d state %d ", rf.me, rf.currentTerm, rf.state)
 }
 
 func (rf *Raft) startLeader() {
 	rf.state = Leader
 	rf.resetHeartbeatTimer()
 	rf.sendHeartbeats()
+	rf.logger.Debug("%d change leader term %d state %d ", rf.me, rf.currentTerm, rf.state)
+
 }
 
 // the service or tester wants to create a Raft server. the ports
@@ -443,8 +476,15 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	rf.resetElectionTimer()
 	rf.heartbeatTimer = time.NewTimer(100 * time.Millisecond)
-	rf.heartbeatTimer.Stop()
+	//rf.heartbeatTimer.Stop()
+	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds | log.Lshortfile)
+
+	//rf.logger = util.NewLogger(util.DEBUG)
+	rf.logger = util.NewLogger(util.INFO)
+
+	rf.logger.Debug("raft %v\n", rf)
 	// start ticker goroutine to start elections
+
 	go rf.ticker()
 
 	return rf
